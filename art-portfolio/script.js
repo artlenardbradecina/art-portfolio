@@ -1,192 +1,172 @@
-'use strict';
+// --- AUDIO SYNTHESIZER FOR CYBERPUNK SOUND EFFECTS ---
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-/* ===== Helpers ===== */
-const $  = (s, r = document) => r.querySelector(s);
-const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-
-/* ===== Module 1: Audio FX (Web Audio API) =====
-   The AudioContext is created lazily on first use, as browsers
-   require a user gesture before audio can play. */
-const Sound = (() => {
-  let ctx;
-  function beep(freq = 600, dur = 0.06) {
-    try {
-      ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'square';
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.03, ctx.currentTime);               // keep it quiet
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + dur);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + dur);
-    } catch (e) { /* audio unavailable: fail silently */ }
+function playCyberSound(freq = 440, duration = 0.05, type = 'sine') {
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
   }
-  function init() {
-    let last = null;
-    // Hover beep (mouse only, once per element entry)
-    document.addEventListener('pointerover', e => {
-      if (e.pointerType !== 'mouse') return;
-      const t = e.target.closest('a, button, .card');
-      if (t && t !== last) beep(520, 0.04);
-      last = t;
-    });
-    // Click beep
-    document.addEventListener('click', e => {
-      if (e.target.closest('a, button')) beep(880, 0.08);
-    });
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + duration);
+}
+
+// Hover & Click audio hooks
+document.querySelectorAll('.cyber-btn, .nav-item, .filter-btn').forEach(elem => {
+  elem.addEventListener('mouseenter', () => playCyberSound(600, 0.03, 'square'));
+  elem.addEventListener('click', () => playCyberSound(900, 0.08, 'sawtooth'));
+});
+
+// --- CANVAS PARTICLE GRID BACKGROUND ---
+const canvas = document.getElementById('cyber-canvas');
+const ctx = canvas.getContext('2d');
+
+let particles = [];
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+class Particle {
+  constructor() {
+    this.x = Math.random() * canvas.width;
+    this.y = Math.random() * canvas.height;
+    this.vx = (Math.random() - 0.5) * 0.8;
+    this.vy = (Math.random() - 0.5) * 0.8;
   }
-  return { init, beep };
-})();
-
-/* ===== Module 2: Canvas particle network ===== */
-const Particles = (() => {
-  const canvas = $('#bg');
-  const g = canvas.getContext('2d');
-  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const LINK = 120;                                  // max link distance in px
-  let w, h, dots = [];
-
-  function resize() {
-    w = canvas.width = innerWidth;
-    h = canvas.height = innerHeight;
-    const n = Math.min(90, Math.floor((w * h) / 16000));   // fewer dots on small screens
-    dots = Array.from({ length: n }, () => ({
-      x: Math.random() * w, y: Math.random() * h,
-      vx: (Math.random() - 0.5) * 0.6, vy: (Math.random() - 0.5) * 0.6
-    }));
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    if (this.x < 0 || this.x > canvas.width) this.vx *= -1;
+    if (this.y < 0 || this.y > canvas.height) this.vy *= -1;
   }
+  draw() {
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(this.x, this.y, 2, 2);
+  }
+}
 
-  function frame() {
-    const color = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
-    g.clearRect(0, 0, w, h);
-    g.fillStyle = g.strokeStyle = color;
-    g.globalAlpha = 0.6;
-    for (const p of dots) {
-      p.x += p.vx; p.y += p.vy;
-      if (p.x < 0 || p.x > w) p.vx *= -1;            // bounce off edges
-      if (p.y < 0 || p.y > h) p.vy *= -1;
-      g.beginPath(); g.arc(p.x, p.y, 1.5, 0, Math.PI * 2); g.fill();
-    }
-    // Connect nearby particles; closer = brighter line
-    for (let i = 0; i < dots.length; i++) {
-      for (let j = i + 1; j < dots.length; j++) {
-        const d = Math.hypot(dots[i].x - dots[j].x, dots[i].y - dots[j].y);
-        if (d < LINK) {
-          g.globalAlpha = (1 - d / LINK) * 0.35;
-          g.beginPath(); g.moveTo(dots[i].x, dots[i].y); g.lineTo(dots[j].x, dots[j].y); g.stroke();
-        }
+for (let i = 0; i < 65; i++) particles.push(new Particle());
+
+function animateCanvas() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  for (let i = 0; i < particles.length; i++) {
+    particles[i].update();
+    particles[i].draw();
+    for (let j = i + 1; j < particles.length; j++) {
+      const dx = particles[i].x - particles[j].x;
+      const dy = particles[i].y - particles[j].y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 120) {
+        ctx.strokeStyle = `rgba(56, 189, 248, ${1 - dist / 120})`;
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(particles[i].x, particles[i].y);
+        ctx.lineTo(particles[j].x, particles[j].y);
+        ctx.stroke();
       }
     }
-    if (!reduce) requestAnimationFrame(frame);       // single static frame if reduced motion
   }
+  requestAnimationFrame(animateCanvas);
+}
+animateCanvas();
 
-  function init() {
-    resize(); frame();
-    addEventListener('resize', () => { resize(); if (reduce) frame(); });
-  }
-  return { init, redraw: frame };
-})();
+// --- PROJECT FILTERING ---
+const filterBtns = document.querySelectorAll('.filter-btn');
+const projectCards = document.querySelectorAll('.project-card');
 
-/* ===== Module 3: Modals (CLI and Resume) ===== */
-const Modal = (() => {
-  function open(id) {
-    $('#' + id).classList.add('open');
-    if (id === 'cli') $('#termIn').focus();
-  }
-  function close(id) { $('#' + id).classList.remove('open'); }
-  function init() {
-    $('#cliBtn').onclick = () => open('cli');
-    $('#cvBtn').onclick = () => open('cvModal');
-    $('#printBtn').onclick = () => window.print();
-    $$('[data-close]').forEach(b => b.onclick = () => close(b.dataset.close));
-    $$('.modal').forEach(m => m.addEventListener('click', e => { if (e.target === m) close(m.id); }));
-    addEventListener('keydown', e => { if (e.key === 'Escape') $$('.modal.open').forEach(m => close(m.id)); });
-  }
-  return { init, open, close };
-})();
+filterBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    filterBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const filter = btn.dataset.filter;
 
-/* ===== Module 4: Navbar, mobile menu and theme ===== */
-const UI = (() => {
-  function init() {
-    const menu = $('#menu'), burger = $('#burger');
-    burger.onclick = () => burger.setAttribute('aria-expanded', menu.classList.toggle('open'));
-    $$('#menu a').forEach(a => a.onclick = () => {
-      menu.classList.remove('open'); burger.setAttribute('aria-expanded', 'false');
+    projectCards.forEach(card => {
+      if (filter === 'all' || card.dataset.category === filter) {
+        card.style.display = 'block';
+      } else {
+        card.style.display = 'none';
+      }
     });
+  });
+});
 
-    // Theme: restore saved choice (storage may be blocked, so guard it)
-    const root = document.documentElement;
-    try { root.dataset.theme = localStorage.getItem('theme') || 'dark'; } catch (e) {}
-    $('#themeBtn').onclick = () => {
-      root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
-      try { localStorage.setItem('theme', root.dataset.theme); } catch (e) {}
-      Particles.redraw();
-    };
-  }
-  return { init };
-})();
+// --- LIGHT/DARK THEME TOGGLE ---
+const themeBtn = document.getElementById('theme-toggle-btn');
+themeBtn.addEventListener('click', () => {
+  document.body.classList.toggle('light-mode');
+});
 
-/* ===== Module 5: Project filter (data-cat attributes, no reload) ===== */
-const Filter = (() => {
-  function init() {
-    const buttons = $$('[data-filter]');
-    buttons.forEach(btn => btn.addEventListener('click', () => {
-      buttons.forEach(b => b.classList.toggle('active', b === btn));
-      $$('.card').forEach(card => {
-        const show = btn.dataset.filter === 'all' || card.dataset.cat === btn.dataset.filter;
-        card.classList.toggle('hide', !show);
-      });
-    }));
-  }
-  return { init };
-})();
+// --- RESUME MODAL HANDLER ---
+const resumeBtn = document.getElementById('resume-modal-btn');
+const resumeModal = document.getElementById('resume-modal');
+const closeResumeBtn = document.getElementById('close-resume-modal');
 
-/* ===== Module 6: Terminal CLI =====
-   Output is built from the page's own DOM, so content stays in sync. */
-const Terminal = (() => {
-  const out = $('#termOut'), input = $('#termIn');
-  const history = []; let hIdx = 0;
+resumeBtn.addEventListener('click', () => resumeModal.classList.add('open'));
+closeResumeBtn.addEventListener('click', () => resumeModal.classList.remove('open'));
 
-  const print = (text, cls = '') => {
+// --- TERMINAL CLI MODE INTERACTION ---
+const cliToggleBtn = document.getElementById('cli-toggle-btn');
+const cliOverlay = document.getElementById('cli-overlay');
+const cliCloseBtn = document.getElementById('cli-close-btn');
+const cliInput = document.getElementById('cli-input');
+const cliOutput = document.getElementById('cli-output');
+
+cliToggleBtn.addEventListener('click', () => {
+  cliOverlay.classList.remove('hidden');
+  cliInput.focus();
+});
+
+cliCloseBtn.addEventListener('click', () => {
+  cliOverlay.classList.add('hidden');
+});
+
+cliInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const cmd = cliInput.value.trim().toLowerCase();
+    cliInput.value = '';
+
     const p = document.createElement('p');
-    p.className = cls; p.textContent = text;
-    out.append(p); out.scrollTop = out.scrollHeight;
-  };
+    p.innerHTML = `<span class="cli-prompt">art@cyber-pc:~$</span> ${cmd}`;
+    cliOutput.appendChild(p);
 
-  const commands = {
-    help:     () => 'Commands: help, about, skills, projects, contact, clear, exit',
-    about:    () => $('#about .lead').textContent,
-    skills:   () => $$('.skill-card').map(c =>
-                `${$('h3', c).textContent}: ${$$('.tag', c).map(t => t.textContent).join(', ')}`).join('\n'),
-    projects: () => $$('.card h3').map((h, i) => `${i + 1}. ${h.textContent}`).join('\n'),
-    contact:  () => 'Email: ' + $('#contact a.btn').getAttribute('href').replace('mailto:', ''),
-    clear:    () => { out.innerHTML = ''; return ''; },
-    exit:     () => { Modal.close('cli'); return ''; }
-  };
+    const res = document.createElement('p');
+    res.style.color = '#94a3b8';
 
-  function run(raw) {
-    const cmd = raw.trim().toLowerCase();
-    if (!cmd) return;
-    history.push(cmd); hIdx = history.length;
-    if (cmd !== 'clear') print('$ ' + cmd, 'cmd');
-    const result = commands[cmd]
-      ? commands[cmd]()
-      : `Unknown command: "${cmd}". Type "help" to list commands.`;
-    if (result) print(result);
+    switch (cmd) {
+      case 'help':
+        res.innerHTML = 'Commands: <span style="color:#38bdf8">about, skills, projects, contact, clear, exit</span>';
+        break;
+      case 'about':
+        res.innerText = 'Art Lenard B. Bradecina - Computer Engineering student specializing in embedded systems & IoT.';
+        break;
+      case 'skills':
+        res.innerText = 'C++, ESP32, Arduino, MPPT Solar Controllers, Sensors, Circuit Analysis.';
+        break;
+      case 'projects':
+        res.innerText = '1. NeuroComm AAC Board & Smart Necklace\n2. Automated Solar Subsurface Irrigation System';
+        break;
+      case 'contact':
+        res.innerText = 'Email: artlenardbradecina@gmail.com';
+        break;
+      case 'clear':
+        cliOutput.innerHTML = '';
+        return;
+      case 'exit':
+        cliOverlay.classList.add('hidden');
+        return;
+      default:
+        res.innerText = `Command not recognized: '${cmd}'. Type 'help' for options.`;
+    }
+    cliOutput.appendChild(res);
+    cliOutput.scrollTop = cliOutput.scrollHeight;
   }
-
-  function init() {
-    print('Portfolio terminal. Type "help" to list commands.');
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { run(input.value); input.value = ''; }
-      if (e.key === 'ArrowUp' && hIdx > 0) input.value = history[--hIdx];                 // history back
-      if (e.key === 'ArrowDown') input.value = history[++hIdx] || (hIdx = history.length, '');
-    });
-  }
-  return { init };
-})();
-
-/* ===== Boot ===== */
-[Particles, Sound, Modal, UI, Filter, Terminal].forEach(m => m.init());
+});
